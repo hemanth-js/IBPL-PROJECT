@@ -90,10 +90,30 @@ app.get('/health', (_req, res) => {
 });
 
 app.post('/api/donors', async (req, res) => {
-  const { name, bloodType, city, phone, email, availabilityStatus = 'available' } = req.body || {};
+  const {
+    name,
+    bloodType,
+    city,
+    phone,
+    email,
+    consent,
+    lastDonationAt,
+  } = req.body || {};
+
   if (!name || !bloodType || !city || !phone) {
     return res.status(400).json({ error: 'name, bloodType, city, and phone are required' });
   }
+
+  if (consent !== true) {
+    return res.status(400).json({ error: 'consent is required' });
+  }
+
+  const lastDonationDate = lastDonationAt ? new Date(lastDonationAt) : null;
+  const inCooldown =
+    !!lastDonationDate &&
+    !Number.isNaN(lastDonationDate.getTime()) &&
+    lastDonationDate.getTime() >
+      Date.now() - DONATION_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
 
   const donor = {
     id: uuid(),
@@ -102,10 +122,12 @@ app.post('/api/donors', async (req, res) => {
     city,
     phone,
     email: email || null,
-    availabilityStatus,
-    lastDonationAt: null,
+    consent: true,
+    availabilityStatus: inCooldown ? 'cooldown' : 'available',
+    lastDonationAt: lastDonationDate && !Number.isNaN(lastDonationDate.getTime()) ? lastDonationDate.toISOString() : null,
     createdAt: new Date().toISOString(),
   };
+
   await db.collection('donors').insertOne(donor);
   res.status(201).json(donor);
 });

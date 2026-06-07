@@ -235,14 +235,59 @@
 }
 
 /* Form Elements */
+:root {
+  --bg: #f8fafc;
+  --card: rgba(255, 255, 255, 0.92);
+  --border: rgba(229, 231, 235, 0.95);
+  --text: #0f172a;
+  --muted: #6b7280;
+  --primary: #2563eb;
+  --primary-600: #1d4ed8;
+}
+
 label {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  font-weight: 600;
-  color: #1f2937;
-  font-size: 15px;
+  font-weight: 650;
+  color: #111827;
+  font-size: 14.5px;
 }
+
+.form-section {
+  padding: 18px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--border);
+}
+
+.section-title {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+  color: #0f172a;
+}
+
+.field-hint {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #6b7280;
+  line-height: 1.35;
+}
+
+.checkbox-row {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.checkbox-row input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+
 
 input,
 select {

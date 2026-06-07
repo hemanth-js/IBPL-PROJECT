@@ -55,6 +55,17 @@ const Home = () => (
   </Page>
 );
 
+const bloodTypes = [
+  'A+',
+  'A-',
+  'B+',
+  'B-',
+  'AB+',
+  'AB-',
+  'O+',
+  'O-',
+];
+
 const DonorRegister = () => {
   const [form, setForm] = useState({
     name: '',
@@ -62,6 +73,8 @@ const DonorRegister = () => {
     city: '',
     phone: '',
     email: '',
+    lastDonationAt: '', // ISO date string or ''
+    consent: false,
   });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -71,11 +84,22 @@ const DonorRegister = () => {
     setMessage('');
     setLoading(true);
     try {
-      await api.post(endpoints.donors, form);
+      const payload = {
+
+        name: form.name,
+        bloodType: form.bloodType,
+        city: form.city,
+        phone: form.phone,
+        email: form.email || null,
+        consent: form.consent,
+        lastDonationAt: form.lastDonationAt ? new Date(form.lastDonationAt).toISOString() : null,
+      };
+
+      await api.post(endpoints.donors, payload);
       setMessage('Registered! You will now get alerts that match.');
-      setForm({ name: '', bloodType: '', city: '', phone: '', email: '' });
-    } catch (err) {
-      setMessage(err.response?.data?.error || 'Failed to register donor');
+      setForm({ name: '', bloodType: '', city: '', phone: '', email: '', lastDonationAt: '', consent: false });
+    } catch (e) {
+      setMessage(e.response?.data?.error || 'Failed to register donor');
     } finally {
       setLoading(false);
     }
@@ -84,51 +108,97 @@ const DonorRegister = () => {
   return (
     <Page title="Donor registration">
       <form className="stack" onSubmit={submit}>
-        <div className="grid two">
-          <label>
-            Name
-            <input
-              required
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-            />
-          </label>
-          <label>
-            Blood type
-            <input
-              required
-              placeholder="e.g. O+, A-"
-              value={form.bloodType}
-              onChange={(e) => setForm({ ...form, bloodType: e.target.value })}
-            />
-          </label>
-          <label>
-            City
-            <input
-              required
-              value={form.city}
-              onChange={(e) => setForm({ ...form, city: e.target.value })}
-            />
-          </label>
-          <label>
-            Phone
-            <input
-              required
-              value={form.phone}
-              onChange={(e) => setForm({ ...form, phone: e.target.value })}
-            />
-          </label>
-          <label>
-            Email (optional)
-            <input
-              type="email"
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-            />
-          </label>
+        <div className="form-section">
+          <h2 className="section-title">Your details</h2>
+          <div className="grid two">
+            <label>
+              Full name
+              <input
+                required
+                value={form.name}
+                autoComplete="name"
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+            </label>
+            <label>
+              Blood type
+              <select
+                required
+                value={form.bloodType}
+                onChange={(e) => setForm({ ...form, bloodType: e.target.value })}
+              >
+                <option value="" disabled>
+                  Select blood group
+                </option>
+                {bloodTypes.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              <span className="field-hint">Used for smart matching.</span>
+            </label>
+            <label>
+              City
+              <input
+                required
+                value={form.city}
+                autoComplete="address-level2"
+                onChange={(e) => setForm({ ...form, city: e.target.value })}
+              />
+            </label>
+            <label>
+              Phone
+              <input
+                required
+                value={form.phone}
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="e.g. +91 98765 43210"
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+              />
+              <span className="field-hint">We send urgent alerts by SMS.</span>
+            </label>
+            <label>
+              Email (optional)
+              <input
+                type="email"
+                value={form.email}
+                autoComplete="email"
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+              />
+            </label>
+          </div>
         </div>
+
+        <div className="form-section">
+          <h2 className="section-title">Donation profile</h2>
+          <div className="grid two">
+            <label>
+              Last donation date
+              <input
+                type="date"
+                value={form.lastDonationAt}
+                onChange={(e) => setForm({ ...form, lastDonationAt: e.target.value })}
+              />
+              <span className="field-hint">Leave empty if you have never donated.</span>
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={form.consent}
+                onChange={(e) => setForm({ ...form, consent: e.target.checked })}
+                required
+              />
+              <span>
+                I confirm I am eligible to donate and consent to be contacted for emergency blood needs.
+              </span>
+            </label>
+          </div>
+        </div>
+
         <button className="button primary" disabled={loading}>
-          {loading ? 'Saving...' : 'Register donor'}
+          {loading ? 'Registering…' : 'Register donor'}
         </button>
         {message && <p className="status">{message}</p>}
       </form>
@@ -165,8 +235,8 @@ const HospitalRequest = () => {
         unitsNeeded: 1,
         urgency: 'high',
       });
-    } catch (err) {
-      setMessage(err.response?.data?.error || 'Failed to send request');
+    } catch (e) {
+      setMessage(e.response?.data?.error || 'Failed to send request');
     } finally {
       setLoading(false);
     }
@@ -310,7 +380,7 @@ const RequestList = () => {
       await api.delete(endpoints.requestDelete(id));
       setRequests(requests.filter(r => r.id !== id));
       setShowModal(false);
-    } catch (err) {
+    } catch {
       alert('Failed to delete request');
     }
   };
