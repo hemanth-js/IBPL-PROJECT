@@ -4,7 +4,9 @@ const path = require('path');
 const { MongoClient } = require('mongodb');
 const { v4: uuid } = require('uuid');
 const twilio = require('twilio');
+const fetch = require('node-fetch');
 require('dotenv').config();
+
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -33,8 +35,35 @@ app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json());
 app.use(express.static('.'));
 
+const toRad = (value) => (value * Math.PI) / 180;
+
+const haversineKmDistance = (coord1, coord2) => {
+  const { lat: lat1, lng: lon1 } = coord1 || {};
+  const { lat: lat2, lng: lon2 } = coord2 || {};
+  if (
+    typeof lat1 !== 'number' ||
+    typeof lon1 !== 'number' ||
+    typeof lat2 !== 'number' ||
+    typeof lon2 !== 'number'
+  ) {
+    return null;
+  }
+
+  const R = 6371; // Earth radius in km
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
 // SMS sender with Twilio support
 const sendSMS = async (phoneNumber, message) => {
+
   try {
     // Always log the message to console for debugging
     console.log(`📱 [SMS] To: ${phoneNumber}`);
@@ -89,6 +118,50 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.get('/api/geocode', async (req, res) => {
+  try {
+    const { address } = req.query || {};
+    if (!address || typeof address !== 'string' || !address.trim()) {
+      return res.status(400).json({ error: 'address query parameter is required' });
+    }
+
+    const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+    if (!GOOGLE_MAPS_API_KEY) {
+      return res.status(500).json({ error: 'Google API key is not configured (GOOGLE_MAPS_API_KEY missing)' });
+    }
+
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      return res.status(502).json({ error: 'Failed to reach Google Geocoding API' });
+    }
+
+    const data = await response.json();
+    if (data.status !== 'OK' || !data.results || data.results.length === 0) {
+      return res.status(400).json({ error: 'Unable to geocode address', status: data.status || null });
+    }
+
+    const result = data.results[0];
+    const location = result?.geometry?.location;
+    const lat = Number(location?.lat);
+    const lng = Number(location?.lng);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ error: 'Geocoding returned invalid coordinates' });
+    }
+
+    return res.json({
+      lat,
+      lng,
+      formattedAddress: result.formatted_address || null,
+      accuracy: data.results?.length ? 'approx' : null,
+    });
+  } catch (e) {
+    return res.status(500).json({ error: 'Geocoding failed', details: e?.message || String(e) });
+  }
+});
+
+
 app.post('/api/donors', async (req, res) => {
   const {
     name,
@@ -98,7 +171,9 @@ app.post('/api/donors', async (req, res) => {
     email,
     consent,
     lastDonationAt,
+    geo,
   } = req.body || {};
+
 
   if (!name || !bloodType || !city || !phone) {
     return res.status(400).json({ error: 'name, bloodType, city, and phone are required' });
@@ -125,8 +200,10 @@ app.post('/api/donors', async (req, res) => {
     consent: true,
     availabilityStatus: inCooldown ? 'cooldown' : 'available',
     lastDonationAt: lastDonationDate && !Number.isNaN(lastDonationDate.getTime()) ? lastDonationDate.toISOString() : null,
+    geo: geo || null,
     createdAt: new Date().toISOString(),
   };
+
 
   await db.collection('donors').insertOne(donor);
   res.status(201).json(donor);
@@ -158,16 +235,55 @@ app.post('/api/requests', async (req, res) => {
     contactPerson,
     phone,
     city,
+    address,
     bloodType,
     unitsNeeded = 1,
     urgency = 'high',
     radiusKm = 25,
+    geo,
   } = req.body || {};
 
-  if (!hospitalName || !contactPerson || !phone || !city || !bloodType) {
+  if (!hospitalName || !contactPerson || !phone || !bloodType) {
     return res
       .status(400)
-      .json({ error: 'hospitalName, contactPerson, phone, city, and bloodType are required' });
+      .json({ error: 'hospitalName, contactPerson, phone, and bloodType are required' });
+  }
+
+  const effectiveCity = city || address || '';
+
+  if (!effectiveCity.trim()) {
+    return res.status(400).json({ error: 'city or address is required' });
+  }
+
+
+  // Resolve geo server-side if browser GPS geo isn't provided.
+  let resolvedGeo = geo || null;
+
+  if ((!resolvedGeo || typeof resolvedGeo.lat !== 'number' || typeof resolvedGeo.lng !== 'number') && address && typeof address === 'string' && address.trim()) {
+    const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+    if (!GOOGLE_MAPS_API_KEY) {
+      return res.status(500).json({ error: 'Google API key is not configured (GOOGLE_MAPS_API_KEY missing)' });
+    }
+
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      return res.status(502).json({ error: 'Failed to reach Google Geocoding API' });
+    }
+
+    const data = await response.json();
+    if (data.status !== 'OK' || !data.results || data.results.length === 0) {
+      return res.status(400).json({ error: 'Unable to geocode address', status: data.status || null });
+    }
+
+    const location = data.results[0]?.geometry?.location;
+    const lat = Number(location?.lat);
+    const lng = Number(location?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ error: 'Geocoding returned invalid coordinates' });
+    }
+
+    resolvedGeo = { lat, lng };
   }
 
   const request = {
@@ -175,33 +291,61 @@ app.post('/api/requests', async (req, res) => {
     hospitalName,
     contactPerson,
     phone,
-    city,
+    city: effectiveCity,
     bloodType: bloodType.toUpperCase(),
     unitsNeeded,
     urgency,
     radiusKm,
+    geo: resolvedGeo || null,
     status: 'open',
     responses: [],
     createdAt: new Date().toISOString(),
   };
+
   await db.collection('requests').insertOne(request);
 
+
   // Find and notify matching donors
-  const matchingDonors = await db.collection('donors').find({
+  const baseQuery = {
     bloodType: bloodType.toUpperCase(),
-    city: new RegExp(`^${city}$`, 'i'),
     $or: [
       { lastDonationAt: null },
       { lastDonationAt: { $exists: false } },
-      { lastDonationAt: { $lte: new Date(Date.now() - DONATION_COOLDOWN_DAYS * 24 * 60 * 60 * 1000) } }
+      { lastDonationAt: { $lte: new Date(Date.now() - DONATION_COOLDOWN_DAYS * 24 * 60 * 60 * 1000) } },
     ],
     availabilityStatus: 'available'
-  }).toArray();
+  };
 
-  console.log(`Matching donors found: ${matchingDonors.length} for bloodType: ${bloodType}, city: ${city}`);
+  // If geo is provided (GPS or Google geocoding), do distance filtering.
+  let matchingDonors = [];
+  if (resolvedGeo && typeof resolvedGeo.lat === 'number' && typeof resolvedGeo.lng === 'number') {
+
+    const donorsInCity = await db.collection('donors').find({
+      ...baseQuery,
+      city: new RegExp(`^${effectiveCity}$`, 'i'),
+    }).toArray();
+
+    matchingDonors = donorsInCity.filter((d) => {
+      if (!d.geo) return false;
+      const km = haversineKmDistance(resolvedGeo, d.geo);
+      return typeof km === 'number' && km <= radiusKm;
+    });
+  } else {
+    matchingDonors = await db.collection('donors').find({
+      ...baseQuery,
+      city: new RegExp(`^${effectiveCity}$`, 'i'),
+    }).toArray();
+  }
+
+
+  console.log(
+    `Matching donors found: ${matchingDonors.length} for bloodType: ${bloodType}, city: ${effectiveCity}, radiusKm: ${radiusKm}`
+  );
+
 
   // Send SMS to matching donors
   matchingDonors.forEach((donor) => {
+
     const message = `🩸 URGENT: ${hospitalName} needs ${bloodType} blood (${unitsNeeded} units). Contact: ${contactPerson} - ${phone}. Reply YES to help.`;
     sendSMS(donor.phone, message);
   });
@@ -263,24 +407,47 @@ app.post('/api/requests/:id/respond', async (req, res) => {
 });
 
 app.get('/api/match', async (req, res) => {
-  const { bloodType, city } = req.query;
+  const { bloodType, city, lat, lng, radiusKm } = req.query;
+
   if (!bloodType || !city) {
     return res.status(400).json({ error: 'bloodType and city are required' });
   }
 
-  const eligible = await db.collection('donors').find({
+  const radius = radiusKm ? Number(radiusKm) : 25;
+
+  const eligibleBaseQuery = {
     bloodType: bloodType.toUpperCase(),
     city: new RegExp(`^${city}$`, 'i'),
     $or: [
       { lastDonationAt: null },
       { lastDonationAt: { $exists: false } },
-      { lastDonationAt: { $lte: new Date(Date.now() - DONATION_COOLDOWN_DAYS * 24 * 60 * 60 * 1000) } }
+      { lastDonationAt: { $lte: new Date(Date.now() - DONATION_COOLDOWN_DAYS * 24 * 60 * 60 * 1000) } },
     ],
     availabilityStatus: 'available'
-  }).toArray();
+  };
+
+  const eligible = await db.collection('donors').find(eligibleBaseQuery).toArray();
+
+  // Distance mode if lat/lng are provided; otherwise return city matches.
+  const hasLatLng = lat !== undefined && lng !== undefined;
+  if (hasLatLng) {
+    const requestGeo = {
+      lat: Number(lat),
+      lng: Number(lng),
+    };
+
+    const filtered = eligible.filter((d) => {
+      if (!d.geo) return false;
+      const km = haversineKmDistance(requestGeo, d.geo);
+      return typeof km === 'number' && km <= radius;
+    });
+
+    return res.json({ total: filtered.length, donors: filtered });
+  }
 
   res.json({ total: eligible.length, donors: eligible });
 });
+
 
 app.listen(PORT, async () => {
   console.log(`Backend running on port ${PORT}`);

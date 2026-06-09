@@ -71,13 +71,50 @@ const DonorRegister = () => {
     name: '',
     bloodType: '',
     city: '',
+    address: '',
     phone: '',
     email: '',
     lastDonationAt: '', // ISO date string or ''
     consent: false,
   });
+
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+
+  const [geo, setGeo] = useState(null);
+  const [geoLoading, setGeoLoading] = useState(false);
+
+  const getMyLocation = async () => {
+    if (!navigator.geolocation) {
+      setMessage('Geolocation is not supported in this browser.');
+      return;
+    }
+    setMessage('');
+    setGeoLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const next = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          timestamp: new Date(pos.timestamp).toISOString(),
+        };
+        setGeo(next);
+        setGeoLoading(false);
+        setMessage('Location captured.');
+      },
+      (err) => {
+        setGeoLoading(false);
+        setMessage(err?.message ? `Location error: ${err.message}` : 'Failed to get location.');
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 30000,
+      }
+    );
+  };
+
 
   const submit = async (e) => {
     e.preventDefault();
@@ -85,19 +122,23 @@ const DonorRegister = () => {
     setLoading(true);
     try {
       const payload = {
-
         name: form.name,
         bloodType: form.bloodType,
         city: form.city,
+        address: form.address || undefined,
         phone: form.phone,
         email: form.email || null,
         consent: form.consent,
         lastDonationAt: form.lastDonationAt ? new Date(form.lastDonationAt).toISOString() : null,
+        geo: geo || null,
       };
+
+
 
       await api.post(endpoints.donors, payload);
       setMessage('Registered! You will now get alerts that match.');
-      setForm({ name: '', bloodType: '', city: '', phone: '', email: '', lastDonationAt: '', consent: false });
+      setForm({ name: '', bloodType: '', city: '', address: '', phone: '', email: '', lastDonationAt: '', consent: false });
+
     } catch (e) {
       setMessage(e.response?.data?.error || 'Failed to register donor');
     } finally {
@@ -110,7 +151,7 @@ const DonorRegister = () => {
       <form className="stack" onSubmit={submit}>
         <div className="form-section">
           <h2 className="section-title">Your details</h2>
-          <div className="grid two">
+        <div className="grid two">
             <label>
               Full name
               <input
@@ -139,13 +180,23 @@ const DonorRegister = () => {
               <span className="field-hint">Used for smart matching.</span>
             </label>
             <label>
-              City
+              City (fallback)
               <input
                 required
                 value={form.city}
                 autoComplete="address-level2"
                 onChange={(e) => setForm({ ...form, city: e.target.value })}
               />
+            </label>
+            <label>
+              Address / location (recommended)
+              <input
+                value={form.address}
+                placeholder="House/Street, Area, City"
+                autoComplete="street-address"
+                onChange={(e) => setForm({ ...form, address: e.target.value })}
+              />
+              <span className="field-hint">Used to compute distance via Google geocoding.</span>
             </label>
             <label>
               Phone
@@ -159,6 +210,7 @@ const DonorRegister = () => {
               />
               <span className="field-hint">We send urgent alerts by SMS.</span>
             </label>
+
             <label>
               Email (optional)
               <input
@@ -197,10 +249,22 @@ const DonorRegister = () => {
           </div>
         </div>
 
-        <button className="button primary" disabled={loading}>
-          {loading ? 'Registering…' : 'Register donor'}
-        </button>
-        {message && <p className="status">{message}</p>}
+          <div className="form-section" style={{ padding: 0 }}>
+            <button type="button" className="button ghost" onClick={getMyLocation} disabled={geoLoading}>
+              {geoLoading ? 'Getting location…' : geo ? 'Use another location' : 'Use my location'}
+            </button>
+            {geo && (
+              <p className="field-hint" style={{ marginTop: 8 }}>
+                Location saved (±{Math.round(geo.accuracy)}m)
+              </p>
+            )}
+          </div>
+
+          <button className="button primary" disabled={loading}>
+            {loading ? 'Registering…' : 'Register donor'}
+          </button>
+          {message && <p className="status">{message}</p>}
+
       </form>
     </Page>
   );
@@ -212,29 +276,77 @@ const HospitalRequest = () => {
     contactPerson: '',
     phone: '',
     city: '',
+    address: '',
     bloodType: '',
     unitsNeeded: 1,
     urgency: 'high',
   });
+
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+
+  const [geo, setGeo] = useState(null);
+  const [geoLoading, setGeoLoading] = useState(false);
+
+  const getMyLocation = async () => {
+    if (!navigator.geolocation) {
+      setMessage('Geolocation is not supported in this browser.');
+      return;
+    }
+    setMessage('');
+    setGeoLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const next = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          timestamp: new Date(pos.timestamp).toISOString(),
+        };
+        setGeo(next);
+        setGeoLoading(false);
+        setMessage('Location captured.');
+      },
+      (err) => {
+        setGeoLoading(false);
+        setMessage(err?.message ? `Location error: ${err.message}` : 'Failed to get location.');
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 30000,
+      }
+    );
+  };
+
 
   const submit = async (e) => {
     e.preventDefault();
     setMessage('');
     setLoading(true);
     try {
-      await api.post(endpoints.requests, form);
+      const payload = {
+        ...form,
+        geo: geo || undefined,
+        address: form.address || undefined,
+      };
+
+
+      await api.post(endpoints.requests, payload);
       setMessage('Request sent to matching donors nearby.');
+
+
       setForm({
         hospitalName: '',
         contactPerson: '',
         phone: '',
         city: '',
+        address: '',
         bloodType: '',
         unitsNeeded: 1,
         urgency: 'high',
       });
+
     } catch (e) {
       setMessage(e.response?.data?.error || 'Failed to send request');
     } finally {
@@ -271,13 +383,23 @@ const HospitalRequest = () => {
             />
           </label>
           <label>
-            City
+            City (fallback)
             <input
               required
               value={form.city}
               onChange={(e) => setForm({ ...form, city: e.target.value })}
             />
           </label>
+          <label>
+            Address / location (recommended)
+            <input
+              value={form.address}
+              placeholder="Hospital street, area, city"
+              autoComplete="street-address"
+              onChange={(e) => setForm({ ...form, address: e.target.value })}
+            />
+          </label>
+
           <label>
             Blood type
             <input
@@ -308,9 +430,21 @@ const HospitalRequest = () => {
             </select>
           </label>
         </div>
+        <div className="form-section" style={{ padding: 0 }}>
+          <button type="button" className="button ghost" onClick={getMyLocation} disabled={geoLoading}>
+            {geoLoading ? 'Getting location…' : geo ? 'Use another location' : 'Use my location'}
+          </button>
+          {geo && (
+            <p className="field-hint" style={{ marginTop: 8 }}>
+              Location saved (±{Math.round(geo.accuracy)}m)
+            </p>
+          )}
+        </div>
+
         <button className="button primary" disabled={loading}>
           {loading ? 'Sending...' : 'Broadcast request'}
         </button>
+
         {message && <p className="status">{message}</p>}
       </form>
     </Page>
