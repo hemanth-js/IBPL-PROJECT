@@ -318,9 +318,12 @@ app.post('/api/requests', async (req, res) => {
 
   // Match by city always. If request has geo, then additionally filter by distance
   // only among donors that have geo. If request has no geo, fall back to city-only matching.
+  const normalizedCity = String(effectiveCity).trim();
+  const escapedCity = normalizedCity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  
   const donorsInCity = await db.collection('donors').find({
     ...baseQuery,
-    city: new RegExp(`^${effectiveCity}$`, 'i'),
+    city: new RegExp(`^${escapedCity}$`, 'i'),
   }).toArray();
 
   let matchingDonors = donorsInCity;
@@ -409,10 +412,12 @@ app.get('/api/match', async (req, res) => {
   }
 
   const radius = radiusKm ? Number(radiusKm) : 25;
+  const normalizedCity = String(city).trim();
+  const escapedCity = normalizedCity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   const eligibleBaseQuery = {
     bloodType: bloodType.toUpperCase(),
-    city: new RegExp(`^${city}$`, 'i'),
+    city: new RegExp(`^${escapedCity}$`, 'i'),
     $or: [
       { lastDonationAt: null },
       { lastDonationAt: { $exists: false } },

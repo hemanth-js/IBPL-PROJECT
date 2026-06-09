@@ -144,9 +144,15 @@ const DonorRegister = () => {
 
 
 
-      await api.post(endpoints.donors, payload);
+      const created = await api.post(endpoints.donors, payload);
       setMessage('Registered! You will now get alerts that match.');
       setForm({ name: '', bloodType: '', city: '', address: '', phone: '', email: '', lastDonationAt: '', age: '', consent: false });
+      // Ensure donor list shows newest entry immediately after registering
+      try {
+        await api.get(endpoints.donors);
+      } catch {
+        // ignore
+      }
     } catch (e) {
       setMessage(e.response?.data?.error || 'Failed to register donor');
     } finally {
