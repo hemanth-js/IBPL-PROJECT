@@ -75,6 +75,7 @@ const DonorRegister = () => {
     phone: '',
     email: '',
     lastDonationAt: '', // ISO date string or ''
+    age: '', // age in years
     consent: false,
   });
 
@@ -121,6 +122,13 @@ const DonorRegister = () => {
     setMessage('');
     setLoading(true);
     try {
+      const ageNumber = form.age ? Number(form.age) : null;
+      if (ageNumber === null || Number.isNaN(ageNumber) || ageNumber < 18) {
+        setMessage('You must be 18 years or older to register as a donor.');
+        setLoading(false);
+        return;
+      }
+
       const payload = {
         name: form.name,
         bloodType: form.bloodType,
@@ -129,6 +137,7 @@ const DonorRegister = () => {
         phone: form.phone,
         email: form.email || null,
         consent: form.consent,
+        age: ageNumber,
         lastDonationAt: form.lastDonationAt ? new Date(form.lastDonationAt).toISOString() : null,
         geo: geo || null,
       };
@@ -137,8 +146,7 @@ const DonorRegister = () => {
 
       await api.post(endpoints.donors, payload);
       setMessage('Registered! You will now get alerts that match.');
-      setForm({ name: '', bloodType: '', city: '', address: '', phone: '', email: '', lastDonationAt: '', consent: false });
-
+      setForm({ name: '', bloodType: '', city: '', address: '', phone: '', email: '', lastDonationAt: '', age: '', consent: false });
     } catch (e) {
       setMessage(e.response?.data?.error || 'Failed to register donor');
     } finally {
@@ -188,6 +196,22 @@ const DonorRegister = () => {
                 onChange={(e) => setForm({ ...form, city: e.target.value })}
               />
             </label>
+
+            <label>
+              Age (must be 18+)
+              <input
+                required
+                type="number"
+                min="18"
+                max="120"
+                value={form.age}
+                onChange={(e) => setForm({ ...form, age: e.target.value })}
+                placeholder="e.g. 23"
+                inputMode="numeric"
+              />
+              <span className="field-hint">We only accept donors who are 18 years or older.</span>
+            </label>
+
             <label>
               Address / location (recommended)
               <input

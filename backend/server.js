@@ -127,7 +127,7 @@ app.get('/api/geocode', async (req, res) => {
 
     const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
     if (!GOOGLE_MAPS_API_KEY) {
-      return res.status(500).json({ error: 'Google API key is not configured (GOOGLE_MAPS_API_KEY missing)' });
+      return res.status(503).json({ error: 'Geocoding service not available (GOOGLE_MAPS_API_KEY missing)', available: false });
     }
 
     const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}`;
@@ -261,29 +261,29 @@ app.post('/api/requests', async (req, res) => {
 
   if ((!resolvedGeo || typeof resolvedGeo.lat !== 'number' || typeof resolvedGeo.lng !== 'number') && address && typeof address === 'string' && address.trim()) {
     const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
-    if (!GOOGLE_MAPS_API_KEY) {
-      return res.status(500).json({ error: 'Google API key is not configured (GOOGLE_MAPS_API_KEY missing)' });
+    
+    // Try to geocode if API key is available, otherwise fall back to city-based matching
+    if (GOOGLE_MAPS_API_KEY) {
+      try {
+        const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}`;
+        const response = await fetch(url);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.status === 'OK' && data.results && data.results.length > 0) {
+            const location = data.results[0]?.geometry?.location;
+            const lat = Number(location?.lat);
+            const lng = Number(location?.lng);
+            if (Number.isFinite(lat) && Number.isFinite(lng)) {
+              resolvedGeo = { lat, lng };
+            }
+          }
+        }
+      } catch (error) {
+        console.log('⚠️  Geocoding failed, falling back to city-based matching:', error.message);
+      }
+    } else {
+      console.log('⚠️  Google Maps API key not configured, using city-based matching');
     }
-
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}`;
-    const response = await fetch(url);
-    if (!response.ok) {
-      return res.status(502).json({ error: 'Failed to reach Google Geocoding API' });
-    }
-
-    const data = await response.json();
-    if (data.status !== 'OK' || !data.results || data.results.length === 0) {
-      return res.status(400).json({ error: 'Unable to geocode address', status: data.status || null });
-    }
-
-    const location = data.results[0]?.geometry?.location;
-    const lat = Number(location?.lat);
-    const lng = Number(location?.lng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return res.status(400).json({ error: 'Geocoding returned invalid coordinates' });
-    }
-
-    resolvedGeo = { lat, lng };
   }
 
   const request = {
@@ -316,25 +316,20 @@ app.post('/api/requests', async (req, res) => {
     availabilityStatus: 'available'
   };
 
-  // If geo is provided (GPS or Google geocoding), do distance filtering.
-  let matchingDonors = [];
+  // Match by city always. If request has geo, then additionally filter by distance
+  // only among donors that have geo. If request has no geo, fall back to city-only matching.
+  const donorsInCity = await db.collection('donors').find({
+    ...baseQuery,
+    city: new RegExp(`^${effectiveCity}$`, 'i'),
+  }).toArray();
+
+  let matchingDonors = donorsInCity;
   if (resolvedGeo && typeof resolvedGeo.lat === 'number' && typeof resolvedGeo.lng === 'number') {
-
-    const donorsInCity = await db.collection('donors').find({
-      ...baseQuery,
-      city: new RegExp(`^${effectiveCity}$`, 'i'),
-    }).toArray();
-
     matchingDonors = donorsInCity.filter((d) => {
       if (!d.geo) return false;
       const km = haversineKmDistance(resolvedGeo, d.geo);
       return typeof km === 'number' && km <= radiusKm;
     });
-  } else {
-    matchingDonors = await db.collection('donors').find({
-      ...baseQuery,
-      city: new RegExp(`^${effectiveCity}$`, 'i'),
-    }).toArray();
   }
 
 
