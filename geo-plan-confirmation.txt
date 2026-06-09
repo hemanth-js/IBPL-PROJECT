@@ -1,5 +1,0 @@
-Plan confirmation checkpoint:
-- Implement browser geolocation capture for donors and hospitals in frontend/src/App.jsx
-- Store donor.geo (lat,lng,accuracy,timestamp) in backend in POST /api/donors
-- Extend backend matching in POST /api/requests and GET /api/match to use distance filtering when request.geo is provided and donor.geo exists; fallback to existing city matching when geo is missing.
-
