@@ -18,17 +18,24 @@ const DONATION_COOLDOWN_DAYS = 90;
 let mongoClient;
 let db;
 
-// Twilio initialization
+// SMS provider initialization
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
+const FAST2SMS_API_KEY = process.env.FAST2SMS_API_KEY;
 
 let twilioClient = null;
-if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) {
+if (FAST2SMS_API_KEY) {
+  console.log('✅ Fast2SMS service initialized');
+}
+
+if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_PHONE_NUMBER) {
   twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
   console.log('✅ Twilio SMS service initialized');
-} else {
-  console.log('⚠️  Twilio not configured - SMS messages will be logged to console only');
+}
+
+if (!FAST2SMS_API_KEY && !twilioClient) {
+  console.log('⚠️  SMS provider not configured - SMS messages will be logged to console only');
 }
 
 app.use(cors({ origin: CORS_ORIGIN }));
@@ -61,30 +68,145 @@ const haversineKmDistance = (coord1, coord2) => {
   return R * c;
 };
 
-// SMS sender with Twilio support
+const normalizeBloodType = (value) => String(value || '').trim().toUpperCase();
+
+const normalizeCity = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
+const isEligibleByDonationDate = (donor) => {
+  if (donor.availabilityStatus !== 'available') return false;
+  if (!donor.lastDonationAt) return true;
+
+  const lastDonationDate = new Date(donor.lastDonationAt);
+  if (Number.isNaN(lastDonationDate.getTime())) return true;
+
+  return (
+    lastDonationDate.getTime() <=
+    Date.now() - DONATION_COOLDOWN_DAYS * 24 * 60 * 60 * 1000
+  );
+};
+
+const hasValidGeo = (geo) =>
+  geo &&
+  typeof geo.lat === 'number' &&
+  typeof geo.lng === 'number' &&
+  Number.isFinite(geo.lat) &&
+  Number.isFinite(geo.lng);
+
+const findMatchingDonors = async ({ bloodType, city, geo, radiusKm = 25 }) => {
+  const normalizedBloodType = normalizeBloodType(bloodType);
+  const normalizedCity = normalizeCity(city);
+  const radius = Number(radiusKm);
+  const effectiveRadius = Number.isFinite(radius) && radius > 0 ? radius : 25;
+
+  const candidates = await db.collection('donors').find({
+    bloodType: normalizedBloodType,
+    availabilityStatus: 'available',
+  }).toArray();
+
+  return candidates.filter((donor) => {
+    if (!isEligibleByDonationDate(donor)) return false;
+
+    const cityMatches =
+      normalizedCity &&
+      normalizeCity(donor.city) === normalizedCity;
+
+    const distanceMatches =
+      hasValidGeo(geo) &&
+      hasValidGeo(donor.geo) &&
+      haversineKmDistance(geo, donor.geo) <= effectiveRadius;
+
+    return cityMatches || distanceMatches;
+  });
+};
+
+// SMS sender with Fast2SMS primary and Twilio fallback
+const normalizeSmsPhoneNumber = (phoneNumber) => {
+  const raw = String(phoneNumber || '').trim();
+  if (!raw) return null;
+  if (raw.startsWith('+')) return raw.replace(/[^\d+]/g, '');
+
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length === 10) return `+91${digits}`;
+  if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
+  return digits ? `+${digits}` : null;
+};
+
+const normalizeFast2SmsPhoneNumber = (phoneNumber) => {
+  const digits = String(phoneNumber || '').replace(/\D/g, '');
+  if (digits.length === 10) return digits;
+  if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2);
+  return null;
+};
+
+const getSmsMode = () => {
+  if (FAST2SMS_API_KEY) return 'fast2sms';
+  if (twilioClient && TWILIO_PHONE_NUMBER) return 'twilio';
+  return 'console';
+};
+
 const sendSMS = async (phoneNumber, message) => {
+  const to = normalizeSmsPhoneNumber(phoneNumber);
+  const fast2SmsTo = normalizeFast2SmsPhoneNumber(phoneNumber);
 
   try {
     // Always log the message to console for debugging
-    console.log(`📱 [SMS] To: ${phoneNumber}`);
+    console.log(`📱 [SMS] To: ${to || phoneNumber}`);
     console.log(`   Message: ${message}`);
+
+    if (!to && !fast2SmsTo) {
+      console.error(`❌ SMS skipped: invalid phone number "${phoneNumber}"`);
+      return { ok: false, mode: 'invalid', phone: phoneNumber, error: 'Invalid phone number' };
+    }
+
+    if (FAST2SMS_API_KEY) {
+      if (!fast2SmsTo) {
+        console.error(`❌ Fast2SMS skipped: phone number must be a valid Indian mobile number "${phoneNumber}"`);
+        return { ok: false, mode: 'fast2sms', phone: phoneNumber, error: 'Invalid Indian mobile number' };
+      }
+
+      const params = new URLSearchParams({
+        authorization: FAST2SMS_API_KEY,
+        route: 'q',
+        message,
+        numbers: fast2SmsTo,
+      });
+
+      const response = await fetch(`https://www.fast2sms.com/dev/bulkV2?${params.toString()}`, {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+      });
+      const data = await response.json().catch(() => null);
+
+      if (response.ok && data?.return !== false) {
+        console.log(`✅ Fast2SMS request accepted for ${fast2SmsTo}`);
+        return { ok: true, mode: 'fast2sms', phone: fast2SmsTo, response: data };
+      }
+
+      const errorMessage = data?.message || data?.error || `Fast2SMS HTTP ${response.status}`;
+      console.error(`❌ Fast2SMS send failed to ${fast2SmsTo}: ${errorMessage}`);
+      return { ok: false, mode: 'fast2sms', phone: fast2SmsTo, error: errorMessage, response: data };
+    }
 
     if (!twilioClient || !TWILIO_PHONE_NUMBER) {
       // Demo mode: only log to console
-      return true;
+      return { ok: true, mode: 'logged', phone: to };
     }
 
     // Send via Twilio
     const result = await twilioClient.messages.create({
       body: message,
       from: TWILIO_PHONE_NUMBER,
-      to: phoneNumber,
+      to,
     });
-    console.log(`✅ SMS sent to ${phoneNumber} (SID: ${result.sid})`);
-    return true;
+    console.log(`✅ SMS sent to ${to} (SID: ${result.sid})`);
+    return { ok: true, mode: 'twilio', phone: to, sid: result.sid };
   } catch (error) {
-    console.error(`❌ SMS send failed to ${phoneNumber}: ${error.message}`);
-    return false;
+    console.error(`❌ SMS send failed to ${to || phoneNumber}: ${error.message}`);
+    return { ok: false, mode: getSmsMode(), phone: to || phoneNumber, error: error.message };
   }
 };
 
@@ -192,9 +314,9 @@ app.post('/api/donors', async (req, res) => {
 
   const donor = {
     id: uuid(),
-    name,
-    bloodType: bloodType.toUpperCase(),
-    city,
+    name: String(name).trim(),
+    bloodType: normalizeBloodType(bloodType),
+    city: String(city).trim(),
     phone,
     email: email || null,
     consent: true,
@@ -249,7 +371,7 @@ app.post('/api/requests', async (req, res) => {
       .json({ error: 'hospitalName, contactPerson, phone, and bloodType are required' });
   }
 
-  const effectiveCity = city || address || '';
+  const effectiveCity = String(city || address || '').trim();
 
   if (!effectiveCity.trim()) {
     return res.status(400).json({ error: 'city or address is required' });
@@ -292,7 +414,7 @@ app.post('/api/requests', async (req, res) => {
     contactPerson,
     phone,
     city: effectiveCity,
-    bloodType: bloodType.toUpperCase(),
+    bloodType: normalizeBloodType(bloodType),
     unitsNeeded,
     urgency,
     radiusKm,
@@ -305,52 +427,34 @@ app.post('/api/requests', async (req, res) => {
   await db.collection('requests').insertOne(request);
 
 
-  // Find and notify matching donors
-  const baseQuery = {
-    bloodType: bloodType.toUpperCase(),
-    $or: [
-      { lastDonationAt: null },
-      { lastDonationAt: { $exists: false } },
-      { lastDonationAt: { $lte: new Date(Date.now() - DONATION_COOLDOWN_DAYS * 24 * 60 * 60 * 1000) } },
-    ],
-    availabilityStatus: 'available'
-  };
-
-  // Match by city always. If request has geo, then additionally filter by distance
-  // only among donors that have geo. If request has no geo, fall back to city-only matching.
-  const normalizedCity = String(effectiveCity).trim();
-  const escapedCity = normalizedCity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  
-  const donorsInCity = await db.collection('donors').find({
-    ...baseQuery,
-    city: new RegExp(`^${escapedCity}$`, 'i'),
-  }).toArray();
-
-  let matchingDonors = donorsInCity;
-  if (resolvedGeo && typeof resolvedGeo.lat === 'number' && typeof resolvedGeo.lng === 'number') {
-    matchingDonors = donorsInCity.filter((d) => {
-      if (!d.geo) return false;
-      const km = haversineKmDistance(resolvedGeo, d.geo);
-      return typeof km === 'number' && km <= radiusKm;
-    });
-  }
+  const matchingDonors = await findMatchingDonors({
+    bloodType,
+    city: effectiveCity,
+    geo: resolvedGeo,
+    radiusKm,
+  });
 
 
   console.log(
-    `Matching donors found: ${matchingDonors.length} for bloodType: ${bloodType}, city: ${effectiveCity}, radiusKm: ${radiusKm}`
+    `Matching donors found: ${matchingDonors.length} for bloodType: ${normalizeBloodType(bloodType)}, city: ${effectiveCity}, radiusKm: ${radiusKm}`
   );
 
 
   // Send SMS to matching donors
-  matchingDonors.forEach((donor) => {
+  const smsResults = await Promise.all(matchingDonors.map((donor) => {
 
-    const message = `🩸 URGENT: ${hospitalName} needs ${bloodType} blood (${unitsNeeded} units). Contact: ${contactPerson} - ${phone}. Reply YES to help.`;
-    sendSMS(donor.phone, message);
-  });
+    const message = `URGENT: ${hospitalName} needs ${bloodType} blood (${unitsNeeded} units). Contact: ${contactPerson} - ${phone}. Reply YES to help.`;
+    return sendSMS(donor.phone, message);
+  }));
+
+  const successfulNotifications = smsResults.filter((result) => result.ok).length;
 
   res.status(201).json({
     request,
-    notificationsSent: matchingDonors.length,
+    notificationsSent: successfulNotifications,
+    notificationsAttempted: smsResults.length,
+    smsMode: getSmsMode(),
+    smsResults,
     matchingDonors: matchingDonors.map(d => ({ id: d.id, name: d.name, phone: d.phone }))
   });
 });
@@ -412,40 +516,22 @@ app.get('/api/match', async (req, res) => {
   }
 
   const radius = radiusKm ? Number(radiusKm) : 25;
-  const normalizedCity = String(city).trim();
-  const escapedCity = normalizedCity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const requestGeo =
+    lat !== undefined && lng !== undefined
+      ? {
+          lat: Number(lat),
+          lng: Number(lng),
+        }
+      : null;
 
-  const eligibleBaseQuery = {
-    bloodType: bloodType.toUpperCase(),
-    city: new RegExp(`^${escapedCity}$`, 'i'),
-    $or: [
-      { lastDonationAt: null },
-      { lastDonationAt: { $exists: false } },
-      { lastDonationAt: { $lte: new Date(Date.now() - DONATION_COOLDOWN_DAYS * 24 * 60 * 60 * 1000) } },
-    ],
-    availabilityStatus: 'available'
-  };
+  const matchingDonors = await findMatchingDonors({
+    bloodType,
+    city,
+    geo: requestGeo,
+    radiusKm: radius,
+  });
 
-  const eligible = await db.collection('donors').find(eligibleBaseQuery).toArray();
-
-  // Distance mode if lat/lng are provided; otherwise return city matches.
-  const hasLatLng = lat !== undefined && lng !== undefined;
-  if (hasLatLng) {
-    const requestGeo = {
-      lat: Number(lat),
-      lng: Number(lng),
-    };
-
-    const filtered = eligible.filter((d) => {
-      if (!d.geo) return false;
-      const km = haversineKmDistance(requestGeo, d.geo);
-      return typeof km === 'number' && km <= radius;
-    });
-
-    return res.json({ total: filtered.length, donors: filtered });
-  }
-
-  res.json({ total: eligible.length, donors: eligible });
+  res.json({ total: matchingDonors.length, donors: matchingDonors });
 });
 
 

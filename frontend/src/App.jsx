@@ -144,7 +144,7 @@ const DonorRegister = () => {
 
 
 
-      const created = await api.post(endpoints.donors, payload);
+      await api.post(endpoints.donors, payload);
       setMessage('Registered! You will now get alerts that match.');
       setForm({ name: '', bloodType: '', city: '', address: '', phone: '', email: '', lastDonationAt: '', age: '', consent: false });
       // Ensure donor list shows newest entry immediately after registering
@@ -362,8 +362,22 @@ const HospitalRequest = () => {
       };
 
 
-      await api.post(endpoints.requests, payload);
-      setMessage('Request sent to matching donors nearby.');
+      const response = await api.post(endpoints.requests, payload);
+      const {
+        notificationsAttempted = 0,
+        smsMode,
+        matchingDonors = [],
+      } = response.data || {};
+      const modeLabel =
+        smsMode === 'fast2sms'
+          ? 'Fast2SMS'
+          : smsMode === 'twilio'
+            ? 'Twilio SMS'
+            : 'console SMS log';
+      const triggeredCount = notificationsAttempted || matchingDonors.length;
+      setMessage(
+        `Request created. ${triggeredCount} donor notification${triggeredCount === 1 ? '' : 's'} triggered by ${modeLabel}.`
+      );
 
 
       setForm({
