@@ -162,12 +162,13 @@ const sendSMS = async (phoneNumber, message) => {
       return { ok: false, mode: 'invalid', phone: phoneNumber, error: 'Invalid phone number' };
     }
 
-    if (FAST2SMS_API_KEY) {
+  if (FAST2SMS_API_KEY) {
       if (!fast2SmsTo) {
         console.error(`❌ Fast2SMS skipped: phone number must be a valid Indian mobile number "${phoneNumber}"`);
         return { ok: false, mode: 'fast2sms', phone: phoneNumber, error: 'Invalid Indian mobile number' };
       }
 
+      // Fast2SMS expects Indian mobile without +91 for numbers
       const params = new URLSearchParams({
         authorization: FAST2SMS_API_KEY,
         route: 'q',
@@ -183,11 +184,13 @@ const sendSMS = async (phoneNumber, message) => {
 
       if (response.ok && data?.return !== false) {
         console.log(`✅ Fast2SMS request accepted for ${fast2SmsTo}`);
+        console.log('   Fast2SMS response:', JSON.stringify(data));
         return { ok: true, mode: 'fast2sms', phone: fast2SmsTo, response: data };
       }
 
       const errorMessage = data?.message || data?.error || `Fast2SMS HTTP ${response.status}`;
       console.error(`❌ Fast2SMS send failed to ${fast2SmsTo}: ${errorMessage}`);
+      console.error('   Fast2SMS response:', JSON.stringify(data));
       return { ok: false, mode: 'fast2sms', phone: fast2SmsTo, error: errorMessage, response: data };
     }
 
@@ -427,6 +430,7 @@ app.post('/api/requests', async (req, res) => {
   await db.collection('requests').insertOne(request);
 
 
+  // Pull matching donors
   const matchingDonors = await findMatchingDonors({
     bloodType,
     city: effectiveCity,
@@ -441,13 +445,34 @@ app.post('/api/requests', async (req, res) => {
 
 
   // Send SMS to matching donors
-  const smsResults = await Promise.all(matchingDonors.map((donor) => {
+  const smsMessage = `URGENT: ${hospitalName} needs ${bloodType} blood (${unitsNeeded} units). Contact: ${contactPerson} - ${phone}. Reply YES to help.`;
 
-    const message = `URGENT: ${hospitalName} needs ${bloodType} blood (${unitsNeeded} units). Contact: ${contactPerson} - ${phone}. Reply YES to help.`;
-    return sendSMS(donor.phone, message);
-  }));
+  console.log('📣 SMS broadcast starting');
+  console.log(`   smsMode=${getSmsMode()}`);
+  console.log(`   effectiveCity=${effectiveCity}`);
+  console.log(`   matchingDonors=${matchingDonors.length}`);
+  console.log(`   message=${smsMessage}`);
 
-  const successfulNotifications = smsResults.filter((result) => result.ok).length;
+  const smsResults = await Promise.all(
+    matchingDonors.map((donor) => sendSMS(donor.phone, smsMessage))
+  );
+
+  const successfulNotifications = smsResults.filter((result) => result && result.ok).length;
+
+  // Persist sms results into the request for debugging
+  await db.collection('requests').updateOne(
+    { id: request.id },
+    {
+      $set: {
+        smsMode: getSmsMode(),
+        smsMessage,
+        notificationsSent: successfulNotifications,
+        notificationsAttempted: smsResults.length,
+        smsResults,
+        lastSmsBroadcastAt: new Date().toISOString(),
+      },
+    }
+  );
 
   res.status(201).json({
     request,
@@ -455,7 +480,11 @@ app.post('/api/requests', async (req, res) => {
     notificationsAttempted: smsResults.length,
     smsMode: getSmsMode(),
     smsResults,
-    matchingDonors: matchingDonors.map(d => ({ id: d.id, name: d.name, phone: d.phone }))
+    matchingDonors: matchingDonors.map((d) => ({ id: d.id, name: d.name, phone: d.phone })),
+    warning:
+      getSmsMode() === 'console'
+        ? 'SMS provider not configured on server (FAST2SMS_API_KEY and Twilio env vars missing). Messages were only logged to console.'
+        : undefined,
   });
 });
 
