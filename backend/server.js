@@ -4,7 +4,8 @@ const path = require('path');
 const { MongoClient } = require('mongodb');
 const { v4: uuid } = require('uuid');
 const twilio = require('twilio');
-const fetch = require('node-fetch');
+// node-fetch v3 is ESM-only. Provide a compatible fetch wrapper for CommonJS.
+const fetch = (...args) => import('node-fetch').then(({ default: fetchFn }) => fetchFn(...args));
 require('dotenv').config();
 
 
