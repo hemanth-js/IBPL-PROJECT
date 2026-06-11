@@ -137,6 +137,29 @@
   border-top: 1px solid #e5e7eb;
 }
 
+.install-wrap {
+  margin-top: 18px;
+  display: flex;
+  justify-content: center;
+}
+
+.install-btn {
+  width: auto;
+  max-width: 100%;
+}
+
+@media (max-width: 480px) {
+  .install-wrap {
+    justify-content: flex-start;
+  }
+
+  .install-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+
 .pill {
   background: #f9fafb;
   border: 1px solid #e5e7eb;

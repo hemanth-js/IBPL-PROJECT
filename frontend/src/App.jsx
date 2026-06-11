@@ -21,39 +21,72 @@ const InfoPill = ({ label, value }) => (
   </div>
 );
 
-const Home = () => (
-  <Page title="Emergency Blood Donor Platform">
-    <div className="grid">
-      <section className="stack">
-        <h3>For Hospitals</h3>
-        <ul>
-          <li>Broadcast urgent requests to matching donors nearby</li>
-          <li>Track responses in real time</li>
-          <li>See donor verification and cooldown status</li>
-        </ul>
-        <Link className="button primary" to="/hospital/request">
-          Create an emergency request
-        </Link>
-      </section>
-      <section className="stack">
-        <h3>For Donors</h3>
-        <ul>
-          <li>Register once, get relevant alerts only</li>
-          <li>Accept/decline with one tap</li>
-          <li>Keep availability up to date</li>
-        </ul>
-        <Link className="button secondary" to="/donor/register">
-          Register as donor
-        </Link>
-      </section>
-    </div>
-    <div className="highlight">
-      <InfoPill label="Donation cooldown" value="90 days" />
-      <InfoPill label="Smart matching" value="Blood type + city" />
-      <InfoPill label="Built for emergencies" value="24/7 ready" />
-    </div>
-  </Page>
-);
+const Home = () => {
+  const [installPrompt, setInstallPrompt] = useState(null);
+
+  useEffect(() => {
+    const handler = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const isInstallable = !!installPrompt;
+
+  const onInstall = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    if (choice?.outcome === 'accepted') {
+      setInstallPrompt(null);
+    }
+  };
+
+  return (
+    <Page title="Emergency Blood Donor Platform">
+      <div className="grid">
+        <section className="stack">
+          <h3>For Hospitals</h3>
+          <ul>
+            <li>Broadcast urgent requests to matching donors nearby</li>
+            <li>Track responses in real time</li>
+            <li>See donor verification and cooldown status</li>
+          </ul>
+          <Link className="button primary" to="/hospital/request">
+            Create an emergency request
+          </Link>
+        </section>
+        <section className="stack">
+          <h3>For Donors</h3>
+          <ul>
+            <li>Register once, get relevant alerts only</li>
+            <li>Accept/decline with one tap</li>
+            <li>Keep availability up to date</li>
+          </ul>
+          <Link className="button secondary" to="/donor/register">
+            Register as donor
+          </Link>
+        </section>
+      </div>
+
+      <div className="highlight">
+        <InfoPill label="Donation cooldown" value="90 days" />
+        <InfoPill label="Smart matching" value="Blood type + city" />
+        <InfoPill label="Built for emergencies" value="24/7 ready" />
+      </div>
+
+      <div className="install-wrap">
+        <button className="button ghost install-btn" onClick={onInstall} disabled={!isInstallable}>
+          {isInstallable ? 'Install app' : 'Install app (optional)'}
+        </button>
+      </div>
+    </Page>
+  );
+};
+
 
 const bloodTypes = [
   'A+',
