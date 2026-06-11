@@ -170,9 +170,11 @@ const sendSMS = async (phoneNumber, message) => {
       }
 
       // Fast2SMS expects Indian mobile without +91 for numbers
+      // Use route 'v3' for SMS (most accounts) to avoid "transaction limit" issues tied to wrong route.
+      // If your account requires a specific route, you can change it back.
       const params = new URLSearchParams({
         authorization: FAST2SMS_API_KEY,
-        route: 'q',
+        route: 'v3',
         message,
         numbers: fast2SmsTo,
       });
