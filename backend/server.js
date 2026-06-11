@@ -163,7 +163,7 @@ const sendSMS = async (phoneNumber, message) => {
       return { ok: false, mode: 'invalid', phone: phoneNumber, error: 'Invalid phone number' };
     }
 
-  if (FAST2SMS_API_KEY) {
+    if (FAST2SMS_API_KEY) {
       if (!fast2SmsTo) {
         console.error(`❌ Fast2SMS skipped: phone number must be a valid Indian mobile number "${phoneNumber}"`);
         return { ok: false, mode: 'fast2sms', phone: phoneNumber, error: 'Invalid Indian mobile number' };
