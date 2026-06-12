@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Routes, Route, Link, NavLink } from 'react-router-dom';
 import './App.css';
 import './index.css';
+import './donor-dropdown.css';
 import { api, endpoints } from './api';
 
 const Page = ({ title, children }) => (
@@ -347,9 +348,13 @@ const HospitalRequest = () => {
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [matchingDonors, setMatchingDonors] = useState([]);
+  const [showDonorsDropdown, setShowDonorsDropdown] = useState(false);
+  const [lastRequestId, setLastRequestId] = useState(null);
 
   const [geo, setGeo] = useState(null);
   const [geoLoading, setGeoLoading] = useState(false);
+
 
   const getMyLocation = async () => {
     if (!navigator.geolocation) {
@@ -412,6 +417,10 @@ const HospitalRequest = () => {
         `Request created. ${triggeredCount} donor notification${triggeredCount === 1 ? '' : 's'} triggered by ${modeLabel}.`
       );
 
+      const updatedMatchingDonors = response.data?.matchingDonors || [];
+      setMatchingDonors(updatedMatchingDonors);
+      setShowDonorsDropdown(true);
+      setLastRequestId(response.data?.request?.id || null);
 
       setForm({
         hospitalName: '',
@@ -524,6 +533,85 @@ const HospitalRequest = () => {
 
         {message && <p className="status">{message}</p>}
       </form>
+
+      {showDonorsDropdown && (
+        <div style={{ marginTop: 18 }}>
+          <div className="donor-dropdown-header">
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => setShowDonorsDropdown((v) => !v)}
+            >
+              {matchingDonors.length > 0
+                ? `Matching donors (${matchingDonors.length})`
+                : 'Matching donors (none found)'}
+            </button>
+            {lastRequestId && <span className="muted">Request ID: {lastRequestId}</span>}
+          </div>
+
+          {matchingDonors.length > 0 ? (
+            <div className="donor-dropdown-list">
+              {matchingDonors.map((d) => (
+                <div key={d.id} className="donor-card">
+                  <div className="donor-card-top">
+                    <div>
+                      <strong>{d.name}</strong>
+                      <div className="muted">
+                        Blood: {d.bloodType} · City: {d.city}
+                      </div>
+                    </div>
+                    <span className={`badge ${d.availabilityStatus === 'available' ? 'available' : 'cooldown'}`}>
+                      {d.availabilityStatus || 'unknown'}
+                    </span>
+                  </div>
+
+                  <div className="donor-details">
+                    <div className="donor-detail">
+                      <div className="donor-detail-label">Phone</div>
+                      <div className="donor-detail-value">{d.phone}</div>
+                    </div>
+                    <div className="donor-detail">
+                      <div className="donor-detail-label">Email</div>
+                      <div className="donor-detail-value">{d.email || '—'}</div>
+                    </div>
+                    <div className="donor-detail">
+                      <div className="donor-detail-label">Last donation</div>
+                      <div className="donor-detail-value">{d.lastDonationAt ? new Date(d.lastDonationAt).toLocaleDateString() : 'Never'}</div>
+                    </div>
+                    <div className="donor-detail">
+                      <div className="donor-detail-label">Consent</div>
+                      <div className="donor-detail-value">{d.consent ? 'Yes' : 'No'}</div>
+                    </div>
+                    <div className="donor-detail">
+                      <div className="donor-detail-label">Geo</div>
+                      <div className="donor-detail-value">
+                        {d.geo && typeof d.geo.lat === 'number' && typeof d.geo.lng === 'number'
+                          ? `${d.geo.lat.toFixed(5)}, ${d.geo.lng.toFixed(5)}`
+                          : '—'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="donor-actions">
+                    <a className="button primary" href={`tel:${d.phone}`}>
+                      Contact by call
+                    </a>
+                    {d.email && (
+                      <a className="button secondary" href={`mailto:${d.email}`}>
+                        Contact by email
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="field-hint" style={{ marginTop: 10 }}>
+              No available donors matched by blood group and city (or within the radius).
+            </p>
+          )}
+        </div>
+      )}
     </Page>
   );
 };

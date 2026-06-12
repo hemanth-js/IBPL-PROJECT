@@ -483,7 +483,8 @@ app.post('/api/requests', async (req, res) => {
     notificationsAttempted: smsResults.length,
     smsMode: getSmsMode(),
     smsResults,
-    matchingDonors: matchingDonors.map((d) => ({ id: d.id, name: d.name, phone: d.phone })),
+    // Send full donor details so hospitals can contact donors directly.
+    matchingDonors: matchingDonors,
     warning:
       getSmsMode() === 'console'
         ? 'SMS provider not configured on server (FAST2SMS_API_KEY and Twilio env vars missing). Messages were only logged to console.'
