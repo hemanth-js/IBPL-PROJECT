@@ -474,6 +474,15 @@ h3 {
     padding: 24px 12px 48px;
   }
 
+  /* Mobile layout improvements for the whole app */
+  .grid {
+    gap: 18px;
+  }
+
+  .grid.two {
+    grid-template-columns: 1fr;
+  }
+
   .top-nav {
     flex-direction: column;
     gap: 12px;
@@ -481,6 +490,19 @@ h3 {
     padding: 12px;
     margin: -24px -12px 0;
   }
+
+  .top-nav .links {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .donor-dropdown-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
 
   .top-nav .links {
     width: 100%;
